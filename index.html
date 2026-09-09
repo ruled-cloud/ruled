@@ -157,7 +157,7 @@
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
       <span id="backup-reminder-text" style="font-size:13px;"></span>
       <div style="display:flex;gap:8px;flex-shrink:0;">
-        <button class="btn secondary" id="btn-reminder-backup" style="padding:6px 12px;font-size:12px;">Back up now</button>
+        <button class="btn secondary" id="btn-reminder-backup" style="padding:6px 12px;font-size:12px;">Back up or sync</button>
         <button class="btn secondary" id="btn-reminder-dismiss" style="padding:6px 12px;font-size:12px;">Not now</button>
       </div>
     </div>
@@ -2091,6 +2091,8 @@ document.getElementById('btn-sync-push').addEventListener('click', async () => {
     await setDoc(doc(db, 'ruled_data', code), payload);
     statusEl.style.color = 'var(--green)';
     statusEl.textContent = `Pushed ${bank.length} questions and ${savedTests.length} tests to the cloud.`;
+    localStorage.setItem('ruled-last-cloud-sync', Date.now().toString());
+    checkBackupReminder();
   } catch (err) {
     statusEl.style.color = 'var(--red)';
     statusEl.textContent = 'Push failed: ' + (err && err.message ? err.message : 'unknown error');
@@ -2116,6 +2118,8 @@ document.getElementById('btn-sync-pull').addEventListener('click', async () => {
     const result = mergeIncomingData(data);
     statusEl.style.color = 'var(--green)';
     statusEl.textContent = `Pulled and merged ${result.bankCount} questions, ${result.testCount} tests, ${result.attemptCount} attempts.`;
+    localStorage.setItem('ruled-last-cloud-sync', Date.now().toString());
+    checkBackupReminder();
   } catch (err) {
     statusEl.style.color = 'var(--red)';
     statusEl.textContent = 'Pull failed: ' + (err && err.message ? err.message : 'unknown error');
@@ -2130,16 +2134,18 @@ function checkBackupReminder() {
 
   const dismissedAt = parseInt(localStorage.getItem('ruled-reminder-dismissed') || '0');
   const lastBackup = parseInt(localStorage.getItem('ruled-last-backup') || '0');
+  const lastCloudSync = parseInt(localStorage.getItem('ruled-last-cloud-sync') || '0');
+  const lastProtected = Math.max(lastBackup, lastCloudSync);
   const now = Date.now();
   const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
 
-  const sinceBackup = lastBackup ? now - lastBackup : Infinity;
+  const sinceProtected = lastProtected ? now - lastProtected : Infinity;
   const sinceDismiss = dismissedAt ? now - dismissedAt : Infinity;
 
-  if (sinceBackup > THREE_DAYS && sinceDismiss > THREE_DAYS) {
-    textEl.textContent = lastBackup
-      ? `It's been a few days since your last backup. You have ${bank.length} questions and ${savedTests.length} saved tests — worth backing up in case this browser's data ever gets cleared.`
-      : `You have ${bank.length} questions and ${savedTests.length} saved tests with no backup yet. Clearing browser data would lose all of it — export a backup to be safe.`;
+  if (sinceProtected > THREE_DAYS && sinceDismiss > THREE_DAYS) {
+    textEl.textContent = lastProtected
+      ? `It's been a few days since your last backup or cloud sync. You have ${bank.length} questions and ${savedTests.length} saved tests — worth backing up or pushing to cloud again.`
+      : `You have ${bank.length} questions and ${savedTests.length} saved tests with no backup or cloud sync yet. Export a backup or push to cloud to be safe.`;
     banner.style.display = 'block';
   } else {
     banner.style.display = 'none';
@@ -2148,7 +2154,6 @@ function checkBackupReminder() {
 
 document.getElementById('btn-reminder-backup').addEventListener('click', () => {
   document.getElementById('settings-overlay').style.display = 'flex';
-  document.getElementById('btn-export-data').click();
   document.getElementById('backup-reminder-banner').style.display = 'none';
 });
 
