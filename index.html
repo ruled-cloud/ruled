@@ -48,6 +48,13 @@
   .home-cat-tab.active{background:var(--ink);color:var(--paper);border-color:var(--ink);}
   .home-cat-panel{display:none;}
   .home-cat-panel.active{display:block;}
+  .sub-board-tab{
+    flex:0 0 auto;font-family:'Inter',sans-serif;font-size:12px;font-weight:600;color:var(--ink-soft);
+    background:transparent;border:1px solid var(--rule-strong);border-radius:14px;padding:5px 14px;cursor:pointer;
+  }
+  .sub-board-tab.active{background:var(--amber);color:#fff;border-color:var(--amber);}
+  .sub-board-panel{display:none;}
+  .sub-board-panel.active{display:block;}
   nav button:hover{color:var(--ink);}
   section{display:none;}
   section.active{display:block;}
@@ -415,7 +422,28 @@
     <div class="card home-cat-panel" data-home-panel="sectional" style="padding:16px 18px;">
       <h4 style="font-family:'Source Serif 4',serif;font-size:16px;margin-bottom:4px;">Sectional Mock</h4>
       <div class="hint" style="margin-bottom:10px;"><span id="count-sectional">0</span> questions tagged as sectional in your bank. Each mock uses 25 questions.</div>
-      <div id="mocklist-sectional"></div>
+
+      <div data-tabgroup="sectional-board">
+        <div class="sub-board-tabs" style="display:flex;gap:6px;margin-bottom:12px;">
+          <button class="sub-board-tab active" data-key="WB">WB</button>
+          <button class="sub-board-tab" data-key="Railway">Railway</button>
+        </div>
+        <div class="sub-board-panel active" data-key="WB">
+          <div id="mocklist-sectional-wb"></div>
+        </div>
+        <div class="sub-board-panel" data-key="Railway">
+          <div data-tabgroup="railway-subject">
+            <div class="sub-board-tabs" style="display:flex;gap:6px;margin-bottom:12px;">
+              <button class="sub-board-tab active" data-key="Science">Science</button>
+              <button class="sub-board-tab" data-key="Math">Math</button>
+              <button class="sub-board-tab" data-key="Reasoning">Reasoning</button>
+            </div>
+            <div class="sub-board-panel active" data-key="Science"><div id="mocklist-sectional-railway-science"></div></div>
+            <div class="sub-board-panel" data-key="Math"><div id="mocklist-sectional-railway-math"></div></div>
+            <div class="sub-board-panel" data-key="Reasoning"><div id="mocklist-sectional-railway-reasoning"></div></div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="card home-cat-panel" data-home-panel="marathon" style="padding:16px 18px;">
@@ -1226,10 +1254,30 @@ function renderTestListInto(containerId, list, emptyText) {
   });
 }
 
+function inferBoard(tagOrTitle) {
+  return /railway/i.test(tagOrTitle || '') ? 'Railway' : 'WB';
+}
+
+function inferRailwaySubject(tagOrTitle) {
+  const s = (tagOrTitle || '').toLowerCase();
+  if (s.includes('math')) return 'Math';
+  if (s.includes('reason')) return 'Reasoning';
+  if (s.includes('science')) return 'Science';
+  return 'Science'; // fallback bucket for railway items that don't match a keyword
+}
+
 function renderSavedTests() {
   if (!document.getElementById('saved-tests-list')) return;
   renderTestListInto('mocklist-previous_year', savedTests.filter(t => t.category === 'previous_year'), 'No Previous Year Paper mocks yet — paste one in Settings → Question Builder, or start a random one above.');
-  renderTestListInto('mocklist-sectional', savedTests.filter(t => t.category === 'sectional'), 'No Sectional mocks yet — start one above once you have questions tagged Sectional.');
+
+  const sectionalAll = savedTests.filter(t => t.category === 'sectional');
+  const sectionalWB = sectionalAll.filter(t => inferBoard(t.tag || t.title) !== 'Railway');
+  const sectionalRailway = sectionalAll.filter(t => inferBoard(t.tag || t.title) === 'Railway');
+  renderTestListInto('mocklist-sectional-wb', sectionalWB, 'No WB Sectional mocks yet — start one above once you have questions tagged Sectional.');
+  renderTestListInto('mocklist-sectional-railway-science', sectionalRailway.filter(t => inferRailwaySubject(t.tag || t.title) === 'Science'), 'No Railway Science mocks yet.');
+  renderTestListInto('mocklist-sectional-railway-math', sectionalRailway.filter(t => inferRailwaySubject(t.tag || t.title) === 'Math'), 'No Railway Math mocks yet.');
+  renderTestListInto('mocklist-sectional-railway-reasoning', sectionalRailway.filter(t => inferRailwaySubject(t.tag || t.title) === 'Reasoning'), 'No Railway Reasoning mocks yet.');
+
   renderTestListInto('mocklist-marathon', savedTests.filter(t => t.category === 'marathon'), 'No Marathon mocks yet — start one above once you have questions tagged Marathon.');
   renderTestListInto('mocklist-repeated', savedTests.filter(t => t.category === 'repeated'), 'No Repeated Question mocks yet — start one above once you have questions tagged Repeated.');
   renderTestListInto('weak-practice-history', savedTests.filter(t => t.category === 'weak'), 'No practice runs yet.');
@@ -1348,6 +1396,18 @@ document.querySelectorAll('.home-cat-tab').forEach(btn => {
     document.querySelectorAll('.home-cat-tab').forEach(b => b.classList.toggle('active', b.dataset.homeCat === cat));
     document.querySelectorAll('.home-cat-panel').forEach(p => p.classList.toggle('active', p.dataset.homePanel === cat));
   });
+});
+
+// Generic nested-tab handler — works for any [data-tabgroup] wrapper containing
+// a .sub-board-tabs row and sibling .sub-board-panel divs, at any nesting depth.
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.sub-board-tab');
+  if (!btn) return;
+  const group = btn.closest('[data-tabgroup]');
+  if (!group) return;
+  const key = btn.dataset.key;
+  group.querySelectorAll(':scope > .sub-board-tabs > .sub-board-tab').forEach(b => b.classList.toggle('active', b === btn));
+  group.querySelectorAll(':scope > .sub-board-panel').forEach(p => p.classList.toggle('active', p.dataset.key === key));
 });
 
 function renderOptionsEditor() {
