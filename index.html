@@ -159,6 +159,7 @@
     <span id="bank-count-label">0 questions in bank</span>
     <span>All data stays on this device</span>
   </div>
+  <div id="streak-row" style="display:none;text-align:center;font-size:13px;font-weight:600;color:var(--amber);padding:2px 0 14px;"></div>
 
   <div class="card" id="backup-reminder-banner" style="display:none;padding:12px 16px;border-left:3px solid var(--amber);">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
@@ -333,6 +334,14 @@
           </div>
 
           <h3 style="font-size:15px;margin:18px 0 10px;">Bank</h3>
+          <div class="card" style="padding:12px 16px;margin-bottom:12px;">
+            <div class="hint" style="margin-bottom:8px;">Clean up leftover questions from mocks you already deleted — type the tag exactly (e.g. "Math 3") and remove every matching question at once.</div>
+            <div class="row" style="align-items:center;gap:8px;">
+              <input type="text" id="bulk-delete-tag-input" placeholder="Exact tag to remove">
+              <button class="btn danger" id="btn-bulk-delete-tag" style="flex:0 0 auto;">Delete matching</button>
+            </div>
+            <div class="error-text" id="bulk-delete-status" style="display:none;margin-top:8px;"></div>
+          </div>
           <div id="bank-list"></div>
         </div>
       </details>
@@ -1054,6 +1063,7 @@ function loadSavedTests() {
   renderSavedTests();
   renderWeakPanel();
   renderStats();
+  renderStreak();
 }
 
 function persistWeakQuestions() {
@@ -1094,6 +1104,37 @@ function renderStatsPie(subjects, totalQuestions) {
   pieEl.style.background = `conic-gradient(${gradientStops.join(', ')})`;
 }
 
+function formatLocalDateKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function computeStudyStreak() {
+  if (!attempts.length) return 0;
+  const dayKeys = new Set(attempts.map(a => formatLocalDateKey(new Date(a.date || Date.now()))));
+  let cursor = new Date();
+  // If nothing logged yet today, start counting from yesterday instead — today
+  // isn't "missed" until it's actually over, so this avoids the streak dropping
+  // to 0 the moment midnight passes before you've studied that day.
+  if (!dayKeys.has(formatLocalDateKey(cursor))) {
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  let streak = 0;
+  while (dayKeys.has(formatLocalDateKey(cursor))) {
+    streak++;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+}
+
+function renderStreak() {
+  const row = document.getElementById('streak-row');
+  if (!row) return;
+  const streak = computeStudyStreak();
+  if (streak <= 0) { row.style.display = 'none'; return; }
+  row.style.display = 'block';
+  row.textContent = `🔥 ${streak} day${streak === 1 ? '' : 's'} streak`;
+}
+
 function renderStats() {
   const emptyEl = document.getElementById('stats-empty');
   const activeEl = document.getElementById('stats-active');
@@ -1124,10 +1165,12 @@ function renderStats() {
   });
 
   const overallPct = totalQuestions ? Math.round((totalCorrect / totalQuestions) * 100) : 0;
+  const streak = computeStudyStreak();
   document.getElementById('stats-overall').innerHTML = `
     <div>${attempts.length} test${attempts.length === 1 ? '' : 's'} taken</div>
     <div>${totalCorrect} / ${totalQuestions} questions correct overall (${overallPct}%)</div>
     <div>${weakQuestions.length} question${weakQuestions.length === 1 ? '' : 's'} currently in your weak pool</div>
+    ${streak > 0 ? `<div>🔥 ${streak} day${streak === 1 ? '' : 's'} study streak</div>` : ''}
   `;
 
   const subjects = Object.keys(subjectMap).map(tag => {
@@ -1242,6 +1285,22 @@ function renderTestListInto(containerId, list, emptyText) {
           persistSavedTests();
           persistAttempts();
           renderSavedTests();
+
+          // The mock is gone, but its questions still sit in the bank unless
+          // removed too — ask separately so it's a deliberate second step.
+          const questionIds = new Set((t && t.questions || []).map(q => q.id));
+          const stillUsedElsewhere = new Set();
+          savedTests.forEach(other => other.questions.forEach(q => { if (questionIds.has(q.id)) stillUsedElsewhere.add(q.id); }));
+          const removableIds = [...questionIds].filter(id => !stillUsedElsewhere.has(id));
+          if (removableIds.length > 0) {
+            confirmAction(`Also remove these ${removableIds.length} questions from your question bank? They're not used in any other saved mock.`, () => {
+              const removeSet = new Set(removableIds);
+              bank = bank.filter(q => !removeSet.has(q.id));
+              saveBank();
+              renderBank();
+              refreshSelectors();
+            });
+          }
         });
       });
     });
@@ -1659,6 +1718,39 @@ document.getElementById('btn-parse-paper').addEventListener('click', async () =>
   }
 });
 
+document.getElementById('btn-bulk-delete-tag').addEventListener('click', () => {
+  const tag = document.getElementById('bulk-delete-tag-input').value.trim();
+  const statusEl = document.getElementById('bulk-delete-status');
+  statusEl.style.display = 'none';
+  if (!tag) {
+    statusEl.style.display = 'block';
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = 'Type the exact tag first.';
+    return;
+  }
+  const matching = bank.filter(q => q.tag === tag);
+  if (matching.length === 0) {
+    statusEl.style.display = 'block';
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = `No questions found with the tag "${tag}" — check the exact spelling/capitalization.`;
+    return;
+  }
+  confirmAction(`Delete all ${matching.length} questions tagged "${tag}" from the bank? This can't be undone.`, () => {
+    const matchIds = new Set(matching.map(q => q.id));
+    bank = bank.filter(q => !matchIds.has(q.id));
+    saveBank();
+    renderBank();
+    refreshSelectors();
+    document.getElementById('bulk-delete-tag-input').value = '';
+    statusEl.style.display = 'block';
+    statusEl.style.color = 'var(--green)';
+    statusEl.textContent = `Removed ${matching.length} questions tagged "${tag}".`;
+  });
+});
+
+let bankDisplayCount = 30;
+const BANK_PAGE_SIZE = 30;
+
 function renderBank() {
   const list = document.getElementById('bank-list');
   document.getElementById('bank-count-label').textContent = bank.length + (bank.length === 1 ? ' question in bank' : ' questions in bank');
@@ -1666,8 +1758,10 @@ function renderBank() {
     list.innerHTML = '<div class="empty"><h3>Bank is empty</h3><p>Add a question above, or paste a previous year paper to get started.</p></div>';
     return;
   }
+  const reversed = bank.slice().reverse();
+  const visible = reversed.slice(0, bankDisplayCount);
   list.innerHTML = '';
-  bank.slice().reverse().forEach(q => {
+  visible.forEach(q => {
     const el = document.createElement('div');
     el.className = 'qbank-item';
     const optsHtml = q.options.map(o => `<div class="${o.correct ? 'co' : ''}">${o.correct ? '✓ ' : '· '}${escapeHtml(o.text) || (o.image ? '[image option]' : '')}</div>`).join('');
@@ -1689,6 +1783,18 @@ function renderBank() {
     });
     list.appendChild(el);
   });
+  if (reversed.length > bankDisplayCount) {
+    const remaining = reversed.length - bankDisplayCount;
+    const loadMoreBtn = document.createElement('button');
+    loadMoreBtn.className = 'btn secondary';
+    loadMoreBtn.style.cssText = 'width:100%;margin-top:8px;';
+    loadMoreBtn.textContent = `Load ${Math.min(BANK_PAGE_SIZE, remaining)} more (${remaining} remaining)`;
+    loadMoreBtn.addEventListener('click', () => {
+      bankDisplayCount += BANK_PAGE_SIZE;
+      renderBank();
+    });
+    list.appendChild(loadMoreBtn);
+  }
 }
 
 function escapeHtml(s) {
@@ -1942,6 +2048,7 @@ function submitTest() {
     attempts.push({ id: uid(), testId: currentTest.savedId, date: Date.now(), correct: correctCount, total: currentTest.questions.length, score: weightedScore, breakdown });
     persistAttempts();
     renderSavedTests();
+    renderStreak();
   }
   renderResults();
   switchTab('results');
@@ -2081,6 +2188,8 @@ function mergeIncomingData(data) {
   renderBank();
   refreshSelectors();
   renderSavedTests();
+  renderStats();
+  renderStreak();
 
   return { bankCount: incomingBank.length, testCount: incomingTests.length, attemptCount: incomingAttempts.length };
 }
