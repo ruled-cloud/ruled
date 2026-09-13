@@ -335,7 +335,14 @@
 
           <h3 style="font-size:15px;margin:18px 0 10px;">Bank</h3>
           <div class="card" style="padding:12px 16px;margin-bottom:12px;">
-            <div class="hint" style="margin-bottom:8px;">Clean up leftover questions from mocks you already deleted — type the tag exactly (e.g. "Math 3") and remove every matching question at once.</div>
+            <div class="hint" style="margin-bottom:8px;">Find questions left over from mocks you've already deleted — these are tags in your bank that no current saved mock uses.</div>
+            <div class="btn-row" style="margin-top:0;">
+              <button class="btn secondary" id="btn-find-leftovers">Find leftover questions</button>
+            </div>
+            <div id="leftover-tags-list" style="margin-top:10px;"></div>
+          </div>
+          <div class="card" style="padding:12px 16px;margin-bottom:12px;">
+            <div class="hint" style="margin-bottom:8px;">Or remove a specific tag by hand — type it exactly (e.g. "Math 3") and remove every matching question at once.</div>
             <div class="row" style="align-items:center;gap:8px;">
               <input type="text" id="bulk-delete-tag-input" placeholder="Exact tag to remove">
               <button class="btn danger" id="btn-bulk-delete-tag" style="flex:0 0 auto;">Delete matching</button>
@@ -561,7 +568,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
-  import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+  import { getFirestore, doc, setDoc, getDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyCmuTFJoFJBgkX1qCyuP2LV8WgHGtrMd0g",
@@ -574,7 +581,7 @@
 
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
-  window.__ruledFirebase = { db, doc, setDoc, getDoc };
+  window.__ruledFirebase = { db, doc, setDoc, getDoc, deleteDoc };
 </script>
 
 <script>
@@ -1718,6 +1725,53 @@ document.getElementById('btn-parse-paper').addEventListener('click', async () =>
   }
 });
 
+function deleteBankByTag(tag, onDone) {
+  const matching = bank.filter(q => q.tag === tag);
+  if (matching.length === 0) return;
+  confirmAction(`Delete all ${matching.length} questions tagged "${tag}" from the bank? This can't be undone.`, () => {
+    const matchIds = new Set(matching.map(q => q.id));
+    bank = bank.filter(q => !matchIds.has(q.id));
+    saveBank();
+    renderBank();
+    refreshSelectors();
+    if (onDone) onDone(matching.length);
+  });
+}
+
+document.getElementById('btn-find-leftovers').addEventListener('click', () => {
+  const listEl = document.getElementById('leftover-tags-list');
+  const usedTags = new Set(savedTests.map(t => t.tag).filter(Boolean));
+
+  const tagCounts = {};
+  bank.forEach(q => {
+    const tag = q.tag || 'Untagged';
+    if (usedTags.has(tag)) return; // still belongs to a live mock, skip
+    tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+  });
+
+  const leftoverTags = Object.keys(tagCounts).sort((a, b) => tagCounts[b] - tagCounts[a]);
+  if (leftoverTags.length === 0) {
+    listEl.innerHTML = '<div class="hint" style="color:var(--green);">No leftovers found — every tag in your bank still belongs to a current mock.</div>';
+    return;
+  }
+
+  listEl.innerHTML = '<div class="hint" style="margin-bottom:8px;">Found tags with no matching mock — likely leftovers from deletions:</div>';
+  leftoverTags.forEach(tag => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px dashed var(--rule);';
+    row.innerHTML = `
+      <span style="font-size:13px;">${escapeHtml(tag)} <span style="color:var(--ink-soft);">(${tagCounts[tag]})</span></span>
+      <button class="btn danger" style="padding:5px 12px;font-size:12px;">Delete</button>
+    `;
+    row.querySelector('button').addEventListener('click', () => {
+      deleteBankByTag(tag, () => {
+        document.getElementById('btn-find-leftovers').click();
+      });
+    });
+    listEl.appendChild(row);
+  });
+});
+
 document.getElementById('btn-bulk-delete-tag').addEventListener('click', () => {
   const tag = document.getElementById('bulk-delete-tag-input').value.trim();
   const statusEl = document.getElementById('bulk-delete-status');
@@ -1728,23 +1782,18 @@ document.getElementById('btn-bulk-delete-tag').addEventListener('click', () => {
     statusEl.textContent = 'Type the exact tag first.';
     return;
   }
-  const matching = bank.filter(q => q.tag === tag);
-  if (matching.length === 0) {
+  const matchCount = bank.filter(q => q.tag === tag).length;
+  if (matchCount === 0) {
     statusEl.style.display = 'block';
     statusEl.style.color = 'var(--red)';
     statusEl.textContent = `No questions found with the tag "${tag}" — check the exact spelling/capitalization.`;
     return;
   }
-  confirmAction(`Delete all ${matching.length} questions tagged "${tag}" from the bank? This can't be undone.`, () => {
-    const matchIds = new Set(matching.map(q => q.id));
-    bank = bank.filter(q => !matchIds.has(q.id));
-    saveBank();
-    renderBank();
-    refreshSelectors();
+  deleteBankByTag(tag, (count) => {
     document.getElementById('bulk-delete-tag-input').value = '';
     statusEl.style.display = 'block';
     statusEl.style.color = 'var(--green)';
-    statusEl.textContent = `Removed ${matching.length} questions tagged "${tag}".`;
+    statusEl.textContent = `Removed ${count} questions tagged "${tag}".`;
   });
 });
 
@@ -2247,6 +2296,29 @@ document.getElementById('btn-save-sync-code').addEventListener('click', () => {
   statusEl.textContent = `Sync code saved: "${clean}". Use this same code on other browsers/devices.`;
 });
 
+// Firestore caps each document at 1MB. Once the bank grows large, the combined
+// payload can exceed that, so instead of one document we split the JSON string
+// into byte-safe chunks (measuring actual UTF-8 bytes, since Bengali text runs
+// ~3 bytes/char) and store them under a manifest + numbered chunk documents.
+function splitIntoByteChunks(str, maxBytes) {
+  const encoder = new TextEncoder();
+  const chunks = [];
+  let current = '';
+  let currentBytes = 0;
+  for (const ch of str) {
+    const chBytes = encoder.encode(ch).length;
+    if (currentBytes + chBytes > maxBytes) {
+      chunks.push(current);
+      current = '';
+      currentBytes = 0;
+    }
+    current += ch;
+    currentBytes += chBytes;
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
 document.getElementById('btn-sync-push').addEventListener('click', async () => {
   const statusEl = document.getElementById('sync-status');
   const code = getSyncCode();
@@ -2255,11 +2327,27 @@ document.getElementById('btn-sync-push').addEventListener('click', async () => {
   statusEl.style.color = 'var(--ink-soft)';
   statusEl.textContent = 'Pushing to cloud…';
   try {
-    const { db, doc, setDoc } = window.__ruledFirebase;
+    const { db, doc, setDoc, deleteDoc, getDoc } = window.__ruledFirebase;
     const payload = { app: 'Ruled', updatedAt: Date.now(), bank, savedTests, attempts };
-    await setDoc(doc(db, 'ruled_data', code), payload);
+    const fullStr = JSON.stringify(payload);
+    const chunks = splitIntoByteChunks(fullStr, 700000);
+
+    // Clean up any leftover chunks from a previous push that had more chunks
+    // than this one (e.g. after deleting a lot of data).
+    const manifestSnap = await getDoc(doc(db, 'ruled_data', code));
+    const oldChunkCount = manifestSnap.exists() ? (manifestSnap.data().chunkCount || 0) : 0;
+    for (let i = chunks.length; i < oldChunkCount; i++) {
+      await deleteDoc(doc(db, 'ruled_data_chunks', `${code}_${i}`)).catch(() => {});
+    }
+
+    for (let i = 0; i < chunks.length; i++) {
+      statusEl.textContent = `Pushing to cloud… (part ${i + 1} of ${chunks.length})`;
+      await setDoc(doc(db, 'ruled_data_chunks', `${code}_${i}`), { data: chunks[i] });
+    }
+    await setDoc(doc(db, 'ruled_data', code), { app: 'Ruled', updatedAt: Date.now(), chunkCount: chunks.length });
+
     statusEl.style.color = 'var(--green)';
-    statusEl.textContent = `Pushed ${bank.length} questions and ${savedTests.length} tests to the cloud.`;
+    statusEl.textContent = `Pushed ${bank.length} questions and ${savedTests.length} tests to the cloud (${chunks.length} part${chunks.length === 1 ? '' : 's'}).`;
     localStorage.setItem('ruled-last-cloud-sync', Date.now().toString());
     checkBackupReminder();
   } catch (err) {
@@ -2277,13 +2365,30 @@ document.getElementById('btn-sync-pull').addEventListener('click', async () => {
   statusEl.textContent = 'Pulling from cloud…';
   try {
     const { db, doc, getDoc } = window.__ruledFirebase;
-    const snap = await getDoc(doc(db, 'ruled_data', code));
-    if (!snap.exists()) {
+    const manifestSnap = await getDoc(doc(db, 'ruled_data', code));
+    if (!manifestSnap.exists()) {
       statusEl.style.color = 'var(--red)';
       statusEl.textContent = 'No data found for that sync code yet — push from another device first.';
       return;
     }
-    const data = snap.data();
+    const manifest = manifestSnap.data();
+
+    let fullStr;
+    if (manifest.chunkCount) {
+      const parts = [];
+      for (let i = 0; i < manifest.chunkCount; i++) {
+        statusEl.textContent = `Pulling from cloud… (part ${i + 1} of ${manifest.chunkCount})`;
+        const chunkSnap = await getDoc(doc(db, 'ruled_data_chunks', `${code}_${i}`));
+        if (!chunkSnap.exists()) throw new Error(`Missing part ${i + 1} of ${manifest.chunkCount} — try pushing again from the source device.`);
+        parts.push(chunkSnap.data().data);
+      }
+      fullStr = parts.join('');
+    } else {
+      // Backward compatibility with the old single-document format.
+      fullStr = JSON.stringify(manifest);
+    }
+
+    const data = JSON.parse(fullStr);
     const result = mergeIncomingData(data);
     statusEl.style.color = 'var(--green)';
     statusEl.textContent = `Pulled and merged ${result.bankCount} questions, ${result.testCount} tests, ${result.attemptCount} attempts.`;
