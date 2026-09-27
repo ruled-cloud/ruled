@@ -55,6 +55,12 @@
   .sub-board-tab.active{background:var(--amber);color:#fff;border-color:var(--amber);}
   .sub-board-panel{display:none;}
   .sub-board-panel.active{display:block;}
+  .review-cell{
+    aspect-ratio:1;border-radius:6px;border:1.5px solid var(--rule-strong);background:#fff;color:var(--ink);
+    font-family:'Inter',sans-serif;font-weight:600;font-size:14px;cursor:pointer;
+  }
+  .review-cell.answered{background:var(--green);border-color:var(--green);color:#fff;}
+  .section-badge{display:inline-block;background:var(--amber-soft);color:var(--amber);font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:8px;}
   nav button:hover{color:var(--ink);}
   section{display:none;}
   section.active{display:block;}
@@ -62,12 +68,12 @@
   .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--rule);}
   label{display:block;font-size:12px;color:var(--ink-soft);margin:14px 0 5px;font-weight:500;}
   label:first-child{margin-top:0;}
-  input[type=text],textarea,select{
+  input[type=text],input[type=password],input[type=number],input[type=file],textarea,select{
     width:100%;font-family:'Inter',sans-serif;font-size:14px;color:var(--ink);
     background:#fff;border:1px solid var(--rule-strong);border-radius:3px;padding:9px 11px;
   }
   textarea{resize:vertical;min-height:70px;line-height:1.5;}
-  input[type=text]:focus,textarea:focus,select:focus{outline:2px solid var(--amber);outline-offset:0;}
+  input[type=text]:focus,input[type=password]:focus,input[type=number]:focus,textarea:focus,select:focus{outline:2px solid var(--amber);outline-offset:0;}
   .row{display:flex;gap:12px;}
   .row > *{flex:1;}
   .btn{
@@ -226,6 +232,19 @@
       </div>
 
       <div class="card" style="padding:12px 16px;">
+        <h3 style="font-size:14px;margin-bottom:6px;">Admin security</h3>
+        <div class="hint" style="margin-bottom:10px;">Username is fixed as "kali". Change the password below — it's stored as a hash, not in plain text, and you'll be logged out automatically after 15 minutes of inactivity.</div>
+        <label>Current password</label>
+        <input type="password" id="change-pw-current" autocomplete="off">
+        <label>New password</label>
+        <input type="password" id="change-pw-new" autocomplete="off">
+        <div class="btn-row">
+          <button class="btn secondary" id="btn-change-admin-password">Change password</button>
+        </div>
+        <div class="error-text" id="change-pw-status" style="display:none;margin-top:8px;"></div>
+      </div>
+
+      <div class="card" style="padding:12px 16px;">
         <h3 style="font-size:14px;margin-bottom:6px;">Scoring</h3>
         <div class="checkbox-row" style="margin:0 0 10px;">
           <input type="checkbox" id="negmark-enabled">
@@ -275,6 +294,15 @@
             </div>
 
             <div id="add-options"></div>
+
+            <label>Difficulty</label>
+            <select id="add-difficulty">
+              <option value="Easy">Easy</option>
+              <option value="Medium" selected>Medium</option>
+              <option value="Hard">Hard</option>
+            </select>
+            <label>Explanation (optional — shown in review after you answer)</label>
+            <textarea id="add-explanation" placeholder="Why is this the correct answer?" style="min-height:60px;"></textarea>
 
             <div class="btn-row">
               <button class="btn secondary" id="btn-generate-options">
@@ -516,6 +544,35 @@
     </div>
   </section>
 
+  <div id="sections-setup-overlay" style="display:none;position:fixed;inset:0;background:rgba(30,42,63,0.55);z-index:220;align-items:center;justify-content:center;padding:16px;">
+    <div class="card" style="max-width:360px;width:100%;padding:22px;">
+      <h3 style="font-size:16px;margin-bottom:8px;">Set up sections?</h3>
+      <div class="hint" style="margin-bottom:14px;">Split this mock into timed sections — once a section's time runs out you'll move on automatically and can't go back to it. Leave this blank to use one single timer for the whole mock, like before.</div>
+      <label>Number of sections (optional)</label>
+      <input type="number" id="sections-count-input" min="2" placeholder="e.g. 3">
+      <label>Minutes per section</label>
+      <input type="number" id="sections-time-input" min="1" placeholder="e.g. 20">
+      <div class="error-text" id="sections-setup-error" style="display:none;"></div>
+      <div class="btn-row">
+        <button class="btn" id="btn-sections-confirm">Start with sections</button>
+        <button class="btn secondary" id="btn-sections-skip">Skip — one timer</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="review-screen-overlay" style="display:none;position:fixed;inset:0;background:rgba(30,42,63,0.55);z-index:220;align-items:center;justify-content:center;padding:16px;overflow-y:auto;">
+    <div class="card" style="max-width:480px;width:100%;padding:20px;margin:24px 0;">
+      <h3 style="font-size:16px;margin-bottom:6px;">Review before you submit</h3>
+      <div class="hint" style="margin-bottom:14px;">Tap any number to jump back and check it. Green = answered, outlined = unanswered.</div>
+      <div id="review-grid" style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:16px;"></div>
+      <div class="hint" id="review-summary" style="margin-bottom:14px;"></div>
+      <div class="btn-row">
+        <button class="btn" id="btn-review-submit-now">Submit now</button>
+        <button class="btn secondary" id="btn-review-go-back">Go back</button>
+      </div>
+    </div>
+  </div>
+
   <section id="tab-results">
     <div id="results-empty" class="empty">
       <h3>No results yet</h3>
@@ -646,6 +703,67 @@ let timerInterval = null;
 let timeRemaining = 0;
 let timeUp = false;
 let lastResults = null;
+let questionTimes = {};
+let questionEnteredAt = 0;
+let currentSectionIdx = 0;
+
+function recordTimeOnCurrentQuestion() {
+  if (!currentTest || !currentTest.questions[currentQIdx] || !questionEnteredAt) return;
+  const qid = currentTest.questions[currentQIdx].id;
+  const elapsed = (Date.now() - questionEnteredAt) / 1000;
+  questionTimes[qid] = (questionTimes[qid] || 0) + elapsed;
+  questionEnteredAt = Date.now();
+}
+
+function offerSectionsSetup() {
+  document.getElementById('sections-count-input').value = '';
+  document.getElementById('sections-time-input').value = '';
+  document.getElementById('sections-setup-error').style.display = 'none';
+  document.getElementById('sections-setup-overlay').style.display = 'flex';
+}
+
+function buildSections(count, minutesEach, totalQuestions) {
+  const sections = [];
+  const base = Math.floor(totalQuestions / count);
+  let extra = totalQuestions % count;
+  let idx = 0;
+  for (let i = 0; i < count; i++) {
+    const size = base + (extra > 0 ? 1 : 0);
+    if (extra > 0) extra--;
+    sections.push({ startIdx: idx, endIdx: idx + size, timeMin: minutesEach });
+    idx += size;
+  }
+  return sections;
+}
+
+document.getElementById('btn-sections-confirm').addEventListener('click', () => {
+  const count = parseInt(document.getElementById('sections-count-input').value);
+  const mins = parseInt(document.getElementById('sections-time-input').value);
+  const errEl = document.getElementById('sections-setup-error');
+  const totalQ = currentTest.questions.length;
+  if (!count || count < 2 || !mins || mins < 1) {
+    errEl.textContent = 'Enter at least 2 sections and a time limit of 1+ minutes, or use Skip instead.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (count > totalQ) {
+    errEl.textContent = `This mock only has ${totalQ} questions — can't split into more sections than that.`;
+    errEl.style.display = 'block';
+    return;
+  }
+  currentTest.sections = buildSections(count, mins, totalQ);
+  document.getElementById('sections-setup-overlay').style.display = 'none';
+  startTest();
+  switchTab('take');
+});
+
+document.getElementById('btn-sections-skip').addEventListener('click', () => {
+  currentTest.sections = null;
+  document.getElementById('sections-setup-overlay').style.display = 'none';
+  startTest();
+  switchTab('take');
+});
+
 
 function getApiKey() {
   return localStorage.getItem('ruled-api-key') || '';
@@ -689,13 +807,54 @@ function isManualMode() {
 }
 
 const ADMIN_USERNAME = 'kali';
-const ADMIN_PASSWORD = 'kali';
 let isAdminLoggedIn = false;
 let pendingAdminAction = null;
 let pendingConfirmAction = null;
+let failedLoginAttempts = 0;
+let lockoutUntil = 0;
+let lastAdminActivity = 0;
+const SESSION_TIMEOUT_MS = 15 * 60 * 1000; // auto-logout after 15 minutes idle
+
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function getAdminPasswordHash() {
+  return localStorage.getItem('ruled-admin-password-hash');
+}
+
+async function ensureDefaultAdminPassword() {
+  if (!getAdminPasswordHash()) {
+    const hash = await sha256Hex('kali');
+    localStorage.setItem('ruled-admin-password-hash', hash);
+  }
+}
+
+function markAdminActivity() {
+  lastAdminActivity = Date.now();
+}
+
+function logoutAdmin(reason) {
+  if (!isAdminLoggedIn) return;
+  isAdminLoggedIn = false;
+  document.getElementById('settings-overlay').style.display = 'none';
+  renderSavedTests();
+  if (reason) {
+    const statusEl = document.getElementById('sync-status');
+    if (statusEl) { statusEl.style.color = 'var(--amber)'; statusEl.textContent = reason; }
+  }
+}
+
+setInterval(() => {
+  if (isAdminLoggedIn && lastAdminActivity && Date.now() - lastAdminActivity > SESSION_TIMEOUT_MS) {
+    logoutAdmin('Logged out automatically after 15 minutes of inactivity.');
+  }
+}, 30000);
+['click', 'keydown', 'touchstart'].forEach(evt => document.addEventListener(evt, () => { if (isAdminLoggedIn) markAdminActivity(); }));
 
 function requireAdmin(action) {
-  if (isAdminLoggedIn) { action(); return; }
+  if (isAdminLoggedIn) { markAdminActivity(); action(); return; }
   pendingAdminAction = action;
   document.getElementById('login-username').value = '';
   document.getElementById('login-password').value = '';
@@ -721,19 +880,39 @@ document.getElementById('btn-confirm-cancel').addEventListener('click', () => {
   document.getElementById('confirm-modal-overlay').style.display = 'none';
 });
 
-document.getElementById('btn-login-submit').addEventListener('click', () => {
+document.getElementById('btn-login-submit').addEventListener('click', async () => {
   const u = document.getElementById('login-username').value.trim();
   const p = document.getElementById('login-password').value;
   const errEl = document.getElementById('login-error');
-  if (u === ADMIN_USERNAME && p === ADMIN_PASSWORD) {
+
+  if (Date.now() < lockoutUntil) {
+    const secsLeft = Math.ceil((lockoutUntil - Date.now()) / 1000);
+    errEl.textContent = `Too many failed attempts. Try again in ${secsLeft}s.`;
+    errEl.style.display = 'block';
+    return;
+  }
+
+  await ensureDefaultAdminPassword();
+  const enteredHash = await sha256Hex(p);
+  const storedHash = getAdminPasswordHash();
+
+  if (u === ADMIN_USERNAME && enteredHash === storedHash) {
     isAdminLoggedIn = true;
+    failedLoginAttempts = 0;
+    markAdminActivity();
     document.getElementById('login-modal-overlay').style.display = 'none';
     renderSavedTests();
     const action = pendingAdminAction;
     pendingAdminAction = null;
     if (action) action();
   } else {
-    errEl.textContent = 'Incorrect username or password.';
+    failedLoginAttempts++;
+    if (failedLoginAttempts >= 5) {
+      lockoutUntil = Date.now() + 60000;
+      errEl.textContent = 'Too many failed attempts. Locked for 60 seconds.';
+    } else {
+      errEl.textContent = `Incorrect username or password. (${5 - failedLoginAttempts} attempt${5 - failedLoginAttempts === 1 ? '' : 's'} left before a lockout)`;
+    }
     errEl.style.display = 'block';
   }
 });
@@ -1277,8 +1456,8 @@ function renderTestListInto(containerId, list, emptyText) {
         currentTest = { title: t.title, questions: JSON.parse(JSON.stringify(t.questions)), timeMin: t.timeMin, savedId: t.id };
         testAnswers = {};
         currentQIdx = 0;
-        startTest();
-        switchTab('take');
+        questionTimes = {};
+        offerSectionsSetup();
       });
     });
   });
@@ -1393,7 +1572,7 @@ async function generateSimilarSet(testId, btn) {
   }).join('\n');
 
   if (isManualMode()) {
-    const prompt = `Here is a mock test made of ${t.questions.length} exam questions:\n${refList}\n\nGenerate ${t.questions.length} completely new questions covering the same topics, style, and difficulty level as this set, without repeating any of the originals. For each, provide 1 correct answer and 3 plausible wrong distractors. Respond with ONLY a single JSON object and nothing else — no explanation, no commentary, no self-correction. Every value in the JSON must be a literal string or literal array of strings — never JavaScript code, function calls, or expressions of any kind, in this exact format: {"questions": [{"question": "text", "correct": "answer", "wrong": ["a","b","c"]}]}`;
+    const prompt = `Here is a mock test made of ${t.questions.length} exam questions:\n${refList}\n\nGenerate ${t.questions.length} completely new questions covering the same topics, style, and difficulty level as this set, without repeating any of the originals. For each, provide 1 correct answer, 3 plausible wrong distractors, a difficulty rating (Easy/Medium/Hard), and a one-sentence explanation of why the correct answer is right. Respond with ONLY a single JSON object and nothing else — no explanation, no commentary, no self-correction. Every value in the JSON must be a literal string or literal array of strings — never JavaScript code, function calls, or expressions of any kind, in this exact format: {"questions": [{"question": "text", "correct": "answer", "wrong": ["a","b","c"], "difficulty": "Easy or Medium or Hard", "explanation": "one sentence on why the answer is correct"}]}`;
     openManualModal(prompt, (result) => {
       const saved = commitSimilarSet(t, result.questions);
       statusEl.style.color = saved ? 'var(--green)' : 'var(--red)';
@@ -1412,7 +1591,7 @@ async function generateSimilarSet(testId, btn) {
         const avoidList = soFar.length
           ? `\n\nAlso do not repeat any of these already generated in this batch:\n${soFar.slice(-30).map((q, i) => `${i + 1}. ${q.question}`).join('\n')}`
           : '';
-        return `Here is a mock test made of ${t.questions.length} exam questions:\n${refList}\n\nGenerate ${batchCount} completely new questions covering the same topics, style, and difficulty level as this set, without repeating any of the originals.${avoidList} For each, provide 1 correct answer and 3 plausible wrong distractors. Respond with ONLY a single JSON object and nothing else — no explanation, no commentary, no self-correction or second attempt. Every value in the JSON must be a literal string or literal array of strings — never JavaScript code, function calls, or expressions of any kind, just one valid JSON object in this exact format: {"questions": [{"question": "text", "correct": "answer", "wrong": ["a","b","c"]}]}`;
+        return `Here is a mock test made of ${t.questions.length} exam questions:\n${refList}\n\nGenerate ${batchCount} completely new questions covering the same topics, style, and difficulty level as this set, without repeating any of the originals.${avoidList} For each, provide 1 correct answer, 3 plausible wrong distractors, a difficulty rating (Easy/Medium/Hard), and a one-sentence explanation of why the correct answer is right. Respond with ONLY a single JSON object and nothing else — no explanation, no commentary, no self-correction or second attempt. Every value in the JSON must be a literal string or literal array of strings — never JavaScript code, function calls, or expressions of any kind, just one valid JSON object in this exact format: {"questions": [{"question": "text", "correct": "answer", "wrong": ["a","b","c"], "difficulty": "Easy or Medium or Hard", "explanation": "one sentence on why the answer is correct"}]}`;
       },
       (done, total) => { statusEl.textContent = `Writing question ${done + 1} of ${total}…`; }
     );
@@ -1539,6 +1718,8 @@ document.getElementById('btn-add-manual-opt').addEventListener('click', () => {
 document.getElementById('btn-clear-form').addEventListener('click', () => {
   document.getElementById('add-tag').value = '';
   document.getElementById('add-question').value = '';
+  document.getElementById('add-explanation').value = '';
+  document.getElementById('add-difficulty').value = 'Medium';
   currentOptions = [];
   currentImage = null;
   document.getElementById('add-image-input').value = '';
@@ -1583,18 +1764,22 @@ document.getElementById('btn-save-question').addEventListener('click', async () 
   const qtext = document.getElementById('add-question').value.trim();
   const tag = document.getElementById('add-tag').value.trim() || 'Untagged';
   const category = document.getElementById('add-category').value || 'general';
+  const difficulty = document.getElementById('add-difficulty').value || 'Medium';
+  const explanation = document.getElementById('add-explanation').value.trim();
   const errEl = document.getElementById('add-error');
   errEl.style.display = 'none';
   if (!qtext) { errEl.textContent = 'Enter a question.'; errEl.style.display = 'block'; return; }
   const filled = currentOptions.filter(o => o.text.trim() || o.image);
   if (filled.length < 2) { errEl.textContent = 'Add at least 2 options (text or image), or use auto-generate.'; errEl.style.display = 'block'; return; }
   if (!filled.some(o => o.correct)) { errEl.textContent = 'Mark one option as correct.'; errEl.style.display = 'block'; return; }
-  bank.push({ id: uid(), question: qtext, tag, category, options: filled, image: currentImage });
+  bank.push({ id: uid(), question: qtext, tag, category, options: filled, image: currentImage, difficulty, explanation });
   await saveBank();
   renderBank();
   refreshSelectors();
   document.getElementById('add-tag').value = '';
   document.getElementById('add-question').value = '';
+  document.getElementById('add-explanation').value = '';
+  document.getElementById('add-difficulty').value = 'Medium';
   currentOptions = [];
   currentImage = null;
   document.getElementById('add-image-input').value = '';
@@ -1628,7 +1813,9 @@ function addParsedQuestionsToBank(questions, tag, category) {
   (questions || []).forEach(q => {
     if (!q || typeof q.question !== 'string' || typeof q.correct !== 'string' || !Array.isArray(q.wrong)) return;
     const opts = buildOptionsFromAnswer(q.correct, q.wrong);
-    const item = { id: uid(), question: q.question, tag, category: category || 'general', options: opts };
+    const difficulty = ['Easy', 'Medium', 'Hard'].includes(q.difficulty) ? q.difficulty : 'Medium';
+    const explanation = typeof q.explanation === 'string' ? q.explanation : '';
+    const item = { id: uid(), question: q.question, tag, category: category || 'general', options: opts, difficulty, explanation };
     bank.push(item);
     added.push(item);
   });
@@ -1670,7 +1857,7 @@ document.getElementById('btn-parse-paper').addEventListener('click', async () =>
   errEl.style.display = 'none';
   if (!raw) { errEl.textContent = 'Paste some question text first.'; errEl.style.display = 'block'; return; }
 
-  const parsePrompt = `Split the following text into individual exam questions. For each question, if it already has 4 answer options with a clear correct one, extract them as given. If it has no options or fewer than 4, generate exactly 1 correct answer and 3 plausible wrong distractors yourself. Respond with ONLY a single JSON object and nothing else — no explanation, no commentary, no self-correction or second attempt. Every value in the JSON must be a literal string or literal array of strings — never JavaScript code, function calls, or expressions of any kind, in this exact format: {"questions": [{"question": "text", "correct": "answer", "wrong": ["a","b","c"]}]}\n\nText:\n${raw}`;
+  const parsePrompt = `Split the following text into individual exam questions. For each question, if it already has 4 answer options with a clear correct one, extract them as given. If it has no options or fewer than 4, generate exactly 1 correct answer and 3 plausible wrong distractors yourself. Respond with ONLY a single JSON object and nothing else — no explanation, no commentary, no self-correction or second attempt. Every value in the JSON must be a literal string or literal array of strings — never JavaScript code, function calls, or expressions of any kind, in this exact format: {"questions": [{"question": "text", "correct": "answer", "wrong": ["a","b","c"], "difficulty": "Easy or Medium or Hard", "explanation": "one sentence on why the answer is correct"}]}\n\nText:\n${raw}`;
 
   if (isManualMode()) {
     openManualModal(parsePrompt, (result) => {
@@ -1701,7 +1888,7 @@ document.getElementById('btn-parse-paper').addEventListener('click', async () =>
       label.innerHTML = `<span class="spinner"></span>Parsing batch ${c + 1} of ${chunks.length}…`;
       const chunkText = chunks[c].join('\n\n');
       const result = await callClaude(
-        `Split the following text into individual exam questions. For each question, if it already has 4 answer options with a clear correct one, extract them as given. If it has no options or fewer than 4, generate exactly 1 correct answer and 3 plausible wrong distractors yourself. Respond with ONLY a single JSON object and nothing else — no explanation, no commentary, no self-correction or second attempt. Every value in the JSON must be a literal string or literal array of strings — never JavaScript code, function calls, or expressions of any kind, in this exact format: {"questions": [{"question": "text", "correct": "answer", "wrong": ["a","b","c"]}]}\n\nText:\n${chunkText}`,
+        `Split the following text into individual exam questions. For each question, if it already has 4 answer options with a clear correct one, extract them as given. If it has no options or fewer than 4, generate exactly 1 correct answer and 3 plausible wrong distractors yourself. Respond with ONLY a single JSON object and nothing else — no explanation, no commentary, no self-correction or second attempt. Every value in the JSON must be a literal string or literal array of strings — never JavaScript code, function calls, or expressions of any kind, in this exact format: {"questions": [{"question": "text", "correct": "answer", "wrong": ["a","b","c"], "difficulty": "Easy or Medium or Hard", "explanation": "one sentence on why the answer is correct"}]}\n\nText:\n${chunkText}`,
         Math.min(8000, 350 * chunks[c].length + 500)
       );
       allQuestions = allQuestions.concat(result.questions || []);
@@ -1920,8 +2107,8 @@ document.getElementById('btn-practice-weak').addEventListener('click', () => {
     currentTest = { title, questions, timeMin: 0, savedId: savedEntry.id };
     testAnswers = {};
     currentQIdx = 0;
-    startTest();
-    switchTab('take');
+    questionTimes = {};
+    offerSectionsSetup();
   });
 });
 
@@ -1935,7 +2122,7 @@ document.getElementById('btn-generate-similar').addEventListener('click', async 
   const correctOpt = src.options.find(o => o.correct);
 
   if (isManualMode()) {
-    const prompt = `Here is a sample exam question:\nQuestion: ${src.question}\nCorrect answer: ${correctOpt ? correctOpt.text : 'unknown'}\nTopic tag: ${src.tag}\n\nGenerate ${count} NEW questions in the same topic, style, and difficulty level as the sample (do not repeat the sample). For each, provide 1 correct answer and 3 plausible wrong distractors. Respond with ONLY a single JSON object and nothing else — no explanation, no commentary, no self-correction. Every value in the JSON must be a literal string or literal array of strings — never JavaScript code, function calls, or expressions of any kind, in this exact format: {"questions": [{"question": "text", "correct": "answer", "wrong": ["a","b","c"]}]}`;
+    const prompt = `Here is a sample exam question:\nQuestion: ${src.question}\nCorrect answer: ${correctOpt ? correctOpt.text : 'unknown'}\nTopic tag: ${src.tag}\n\nGenerate ${count} NEW questions in the same topic, style, and difficulty level as the sample (do not repeat the sample). For each, provide 1 correct answer, 3 plausible wrong distractors, a difficulty rating (Easy/Medium/Hard), and a one-sentence explanation of why the correct answer is right. Respond with ONLY a single JSON object and nothing else — no explanation, no commentary, no self-correction. Every value in the JSON must be a literal string or literal array of strings — never JavaScript code, function calls, or expressions of any kind, in this exact format: {"questions": [{"question": "text", "correct": "answer", "wrong": ["a","b","c"], "difficulty": "Easy or Medium or Hard", "explanation": "one sentence on why the answer is correct"}]}`;
     openManualModal(prompt, (result) => {
       const finalCategory = categoryFromCount((result.questions || []).length) || src.category;
       const added = addParsedQuestionsToBank(result.questions, src.tag, finalCategory);
@@ -1958,7 +2145,7 @@ document.getElementById('btn-generate-similar').addEventListener('click', async 
         const avoidList = soFar.length
           ? `\n\nAlso do not repeat any of these already generated in this batch:\n${soFar.slice(-30).map((q, i) => `${i + 1}. ${q.question}`).join('\n')}`
           : '';
-        return `Here is a sample exam question:\nQuestion: ${src.question}\nCorrect answer: ${correctOpt ? correctOpt.text : 'unknown'}\nTopic tag: ${src.tag}\n\nGenerate ${batchCount} NEW questions in the same topic, style, and difficulty level as the sample (do not repeat the sample).${avoidList} For each, provide 1 correct answer and 3 plausible wrong distractors. Respond with ONLY a single JSON object and nothing else — no explanation, no commentary, no self-correction or second attempt. Every value in the JSON must be a literal string or literal array of strings — never JavaScript code, function calls, or expressions of any kind, in this exact format: {"questions": [{"question": "text", "correct": "answer", "wrong": ["a","b","c"]}]}`;
+        return `Here is a sample exam question:\nQuestion: ${src.question}\nCorrect answer: ${correctOpt ? correctOpt.text : 'unknown'}\nTopic tag: ${src.tag}\n\nGenerate ${batchCount} NEW questions in the same topic, style, and difficulty level as the sample (do not repeat the sample).${avoidList} For each, provide 1 correct answer, 3 plausible wrong distractors, a difficulty rating (Easy/Medium/Hard), and a one-sentence explanation of why the correct answer is right. Respond with ONLY a single JSON object and nothing else — no explanation, no commentary, no self-correction or second attempt. Every value in the JSON must be a literal string or literal array of strings — never JavaScript code, function calls, or expressions of any kind, in this exact format: {"questions": [{"question": "text", "correct": "answer", "wrong": ["a","b","c"], "difficulty": "Easy or Medium or Hard", "explanation": "one sentence on why the answer is correct"}]}`;
       },
       (done, total) => { label.innerHTML = `<span class="spinner"></span>Generating ${done + 1} of ${total}…`; }
     );
@@ -1985,10 +2172,17 @@ const CATEGORY_LABELS = {
   repeated: 'Repeated Questions'
 };
 
+function currentSectionFor(qIdx) {
+  if (!currentTest.sections) return null;
+  return currentTest.sections.find(s => qIdx >= s.startIdx && qIdx < s.endIdx) || currentTest.sections[currentTest.sections.length - 1];
+}
+
 function startTest() {
   document.getElementById('take-empty').style.display = 'none';
   document.getElementById('take-active').style.display = 'block';
   timeUp = false;
+  currentSectionIdx = 0;
+  questionEnteredAt = Date.now();
   document.getElementById('take-active').classList.remove('locked');
   document.getElementById('take-timer').style.color = 'var(--ink)';
   document.getElementById('take-timer').style.display = 'inline';
@@ -1996,7 +2190,10 @@ function startTest() {
   document.getElementById('btn-next-q').disabled = false;
   document.getElementById('btn-submit-test').disabled = false;
   if (timerInterval) clearInterval(timerInterval);
-  if (currentTest.timeMin > 0) {
+
+  if (currentTest.sections) {
+    startSectionTimer(0);
+  } else if (currentTest.timeMin > 0) {
     timeRemaining = currentTest.timeMin * 60;
     timerInterval = setInterval(() => {
       timeRemaining--;
@@ -2019,6 +2216,33 @@ function startTest() {
   renderQuestion();
 }
 
+function startSectionTimer(sectionIdx) {
+  if (timerInterval) clearInterval(timerInterval);
+  currentSectionIdx = sectionIdx;
+  const section = currentTest.sections[sectionIdx];
+  timeRemaining = section.timeMin * 60;
+  currentQIdx = section.startIdx;
+  questionEnteredAt = Date.now();
+  timerInterval = setInterval(() => {
+    timeRemaining--;
+    renderTimer();
+    if (timeRemaining <= 0) {
+      clearInterval(timerInterval);
+      recordTimeOnCurrentQuestion();
+      if (sectionIdx < currentTest.sections.length - 1) {
+        startSectionTimer(sectionIdx + 1);
+        renderTimer();
+        renderQuestion();
+      } else {
+        timeUp = true;
+        lockTest();
+        setTimeout(submitTest, 1200);
+      }
+    }
+  }, 1000);
+  renderQuestion();
+}
+
 function lockTest() {
   document.getElementById('take-timer').textContent = "Time's up — submitting…";
   document.getElementById('take-timer').style.color = 'var(--red)';
@@ -2031,14 +2255,18 @@ function lockTest() {
 function renderTimer() {
   const m = Math.max(0, Math.floor(timeRemaining / 60));
   const s = Math.max(0, timeRemaining % 60);
-  const label = currentTest.timeMin > 0 ? 'left' : 'elapsed';
+  const label = (currentTest.sections || currentTest.timeMin > 0) ? 'left' : 'elapsed';
   document.getElementById('take-timer').textContent = `${m}:${s.toString().padStart(2, '0')} ${label}`;
 }
 
 function renderQuestion() {
   const q = currentTest.questions[currentQIdx];
   const total = currentTest.questions.length;
-  document.getElementById('take-progress-label').textContent = `Question ${currentQIdx + 1} of ${total}`;
+  const section = currentSectionFor(currentQIdx);
+  const sectionBadge = section
+    ? ` <span class="section-badge">Section ${currentTest.sections.indexOf(section) + 1} of ${currentTest.sections.length}</span>`
+    : '';
+  document.getElementById('take-progress-label').innerHTML = `Question ${currentQIdx + 1} of ${total}${sectionBadge}`;
   document.getElementById('take-progress-fill').style.width = `${((currentQIdx + 1) / total) * 100}%`;
   document.getElementById('take-question').textContent = q.question;
   const imgEl = document.getElementById('take-question-image');
@@ -2064,18 +2292,60 @@ function renderQuestion() {
     });
     optsEl.appendChild(div);
   });
-  document.getElementById('btn-prev-q').disabled = currentQIdx === 0;
+  const atSectionStart = section ? currentQIdx === section.startIdx : currentQIdx === 0;
+  document.getElementById('btn-prev-q').disabled = atSectionStart;
   document.getElementById('btn-next-q').style.display = currentQIdx === total - 1 ? 'none' : 'inline-block';
   document.getElementById('btn-submit-test').style.display = currentQIdx === total - 1 ? 'inline-block' : 'none';
 }
 
 document.getElementById('btn-prev-q').addEventListener('click', () => {
-  if (currentQIdx > 0) { currentQIdx--; renderQuestion(); }
+  const section = currentSectionFor(currentQIdx);
+  const floor = section ? section.startIdx : 0;
+  if (currentQIdx > floor) { recordTimeOnCurrentQuestion(); currentQIdx--; renderQuestion(); }
 });
 document.getElementById('btn-next-q').addEventListener('click', () => {
-  if (currentQIdx < currentTest.questions.length - 1) { currentQIdx++; renderQuestion(); }
+  if (currentQIdx < currentTest.questions.length - 1) { recordTimeOnCurrentQuestion(); currentQIdx++; renderQuestion(); }
 });
-document.getElementById('btn-submit-test').addEventListener('click', submitTest);
+document.getElementById('btn-submit-test').addEventListener('click', () => {
+  recordTimeOnCurrentQuestion();
+  showReviewScreen();
+});
+
+function showReviewScreen() {
+  const grid = document.getElementById('review-grid');
+  grid.innerHTML = '';
+  let answeredCount = 0;
+  currentTest.questions.forEach((q, i) => {
+    const answered = testAnswers[q.id] !== undefined;
+    if (answered) answeredCount++;
+    const section = currentSectionFor(i);
+    const locked = section ? i < section.startIdx : false; // shouldn't normally happen since past sections are already behind us
+    const btn = document.createElement('button');
+    btn.className = 'review-cell' + (answered ? ' answered' : '');
+    btn.textContent = i + 1;
+    if (locked) { btn.disabled = true; btn.style.opacity = '0.4'; }
+    btn.addEventListener('click', () => {
+      recordTimeOnCurrentQuestion();
+      currentQIdx = i;
+      document.getElementById('review-screen-overlay').style.display = 'none';
+      renderQuestion();
+    });
+    grid.appendChild(btn);
+  });
+  const total = currentTest.questions.length;
+  document.getElementById('review-summary').textContent = `${answeredCount} of ${total} answered, ${total - answeredCount} unanswered.`;
+  document.getElementById('review-screen-overlay').style.display = 'flex';
+}
+
+document.getElementById('btn-review-go-back').addEventListener('click', () => {
+  document.getElementById('review-screen-overlay').style.display = 'none';
+  questionEnteredAt = Date.now();
+});
+
+document.getElementById('btn-review-submit-now').addEventListener('click', () => {
+  document.getElementById('review-screen-overlay').style.display = 'none';
+  submitTest();
+});
 
 function submitTest() {
   if (timerInterval) clearInterval(timerInterval);
@@ -2086,7 +2356,8 @@ function submitTest() {
     const correctIdx = q.options.findIndex(o => o.correct);
     const isCorrect = userIdx === correctIdx;
     if (userIdx !== undefined) { isCorrect ? correctCount++ : wrongCount++; }
-    return { qid: q.id, question: q.question, options: q.options, tag: q.tag, category: q.category, userIdx, correctIdx, isCorrect };
+    const timeSpent = Math.round(questionTimes[q.id] || 0);
+    return { qid: q.id, question: q.question, options: q.options, tag: q.tag, category: q.category, userIdx, correctIdx, isCorrect, timeSpent, explanation: q.explanation || '' };
   });
   const nm = getNegativeMarking();
   const weightedScore = nm.enabled ? Math.round((correctCount * nm.correct - wrongCount * nm.wrong) * 100) / 100 : null;
@@ -2125,8 +2396,10 @@ function renderResults() {
       if (cls) optsHtml += `<div class="review-opt ${cls}">${String.fromCharCode(65+i)}. ${escapeHtml(o.text)}${o.image ? `<img src="${o.image}" style="max-width:120px;max-height:90px;display:block;border-radius:3px;margin-top:4px;">` : ''}${i===r.correctIdx ? ' — correct answer' : ' — your answer'}</div>`;
     });
     if (r.userIdx === undefined) optsHtml += `<div class="review-opt" style="background:var(--rule);color:var(--ink-soft);">Not answered</div>`;
+    const timeLabel = r.timeSpent > 0 ? `<div class="hint" style="margin-top:6px;">Time spent: ${r.timeSpent}s</div>` : '';
+    const explanationHtml = r.explanation ? `<div class="hint" style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--rule);"><strong>Why:</strong> ${escapeHtml(r.explanation)}</div>` : '';
     const fixBtn = isAdminLoggedIn ? `<button class="btn secondary" data-fix-idx="${idx}" style="padding:4px 10px;font-size:11px;margin-top:6px;">Fix answer key</button>` : '';
-    div.innerHTML = `<div class="qtext">${idx+1}. ${escapeHtml(r.question)}</div>${optsHtml}${fixBtn}`;
+    div.innerHTML = `<div class="qtext">${idx+1}. ${escapeHtml(r.question)}</div>${optsHtml}${timeLabel}${explanationHtml}${fixBtn}`;
     reviewEl.appendChild(div);
   });
   reviewEl.querySelectorAll('[data-fix-idx]').forEach(btn => {
@@ -2175,8 +2448,8 @@ document.getElementById('btn-edit-answer-cancel').addEventListener('click', () =
 document.getElementById('btn-retake').addEventListener('click', () => {
   testAnswers = {};
   currentQIdx = 0;
-  startTest();
-  switchTab('take');
+  questionTimes = {};
+  offerSectionsSetup();
 });
 
 renderOptionsEditor();
@@ -2400,6 +2673,38 @@ document.getElementById('btn-sync-pull').addEventListener('click', async () => {
   }
 });
 
+document.getElementById('btn-change-admin-password').addEventListener('click', () => {
+  requireAdmin(async () => {
+    const current = document.getElementById('change-pw-current').value;
+    const next = document.getElementById('change-pw-new').value;
+    const statusEl = document.getElementById('change-pw-status');
+    statusEl.style.display = 'block';
+
+    if (!current || !next) {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = 'Fill in both fields.';
+      return;
+    }
+    if (next.length < 4) {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = 'New password should be at least 4 characters.';
+      return;
+    }
+    const currentHash = await sha256Hex(current);
+    if (currentHash !== getAdminPasswordHash()) {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = 'Current password is incorrect.';
+      return;
+    }
+    const newHash = await sha256Hex(next);
+    localStorage.setItem('ruled-admin-password-hash', newHash);
+    document.getElementById('change-pw-current').value = '';
+    document.getElementById('change-pw-new').value = '';
+    statusEl.style.color = 'var(--green)';
+    statusEl.textContent = 'Password changed. Use it next time you log in.';
+  });
+});
+
 function checkBackupReminder() {
   const banner = document.getElementById('backup-reminder-banner');
   const textEl = document.getElementById('backup-reminder-text');
@@ -2436,6 +2741,7 @@ document.getElementById('btn-reminder-dismiss').addEventListener('click', () => 
   document.getElementById('backup-reminder-banner').style.display = 'none';
 });
 
+ensureDefaultAdminPassword();
 loadBank();
 loadSavedTests();
 checkBackupReminder();
