@@ -55,6 +55,13 @@
   .sub-board-tab.active{background:var(--amber);color:#fff;border-color:var(--amber);}
   .sub-board-panel{display:none;}
   .sub-board-panel.active{display:block;}
+  #nav-shared{display:none;}
+  .shared-mode #nav-shared{display:block;}
+  .shared-mode #btn-open-settings,
+  .shared-mode .meta-row,
+  .shared-mode #streak-row,
+  .shared-mode #backup-reminder-banner,
+  .shared-mode nav button[data-tab="home"]{display:none !important;}
   .review-cell{
     aspect-ratio:1;border-radius:6px;border:1.5px solid var(--rule-strong);background:#fff;color:var(--ink);
     font-family:'Inter',sans-serif;font-weight:600;font-size:14px;cursor:pointer;
@@ -229,6 +236,30 @@
           <button class="btn secondary" id="btn-sync-pull">Pull from cloud</button>
         </div>
         <div class="hint" id="sync-status" style="margin-top:8px;"></div>
+      </div>
+
+      <div class="card" style="padding:12px 16px;">
+        <h3 style="font-size:14px;margin-bottom:6px;">Share mocks</h3>
+        <div class="hint" style="margin-bottom:10px;">Pick the mocks you want to share and create a link. Whoever opens it can only take those mocks — nothing else in your app. Revoke a link anytime to cut off further access.</div>
+        <label>Who is this for? (so you remember)</label>
+        <input type="text" id="share-label-input" placeholder="e.g. Rahul">
+        <label>Mocks to include</label>
+        <div id="share-mock-list" style="max-height:220px;overflow-y:auto;border:1px solid var(--rule);border-radius:3px;padding:4px 10px;background:#fff;"></div>
+        <div class="checkbox-row" style="margin:12px 0 0;">
+          <input type="checkbox" id="share-device-lock" checked>
+          <label for="share-device-lock">Lock to the first device that opens it</label>
+        </div>
+        <div class="hint" style="margin-top:4px;">Counts per browser: another phone, another browser, Incognito, or cleared site data looks like a new device. If they switch, use Reset on the link. To test a link yourself, make a throwaway one with this unticked.</div>
+        <div class="btn-row">
+          <button class="btn secondary" id="btn-create-share">Create share link</button>
+        </div>
+        <div id="share-link-box" style="display:none;margin-top:10px;">
+          <input type="text" id="share-link-output" readonly>
+          <div class="btn-row"><button class="btn secondary" id="btn-copy-share-link">Copy link</button></div>
+        </div>
+        <div class="hint" id="share-status" style="margin-top:8px;"></div>
+        <h4 style="font-size:13px;margin:16px 0 8px;">Active links</h4>
+        <div id="active-shares-list"></div>
       </div>
 
       <div class="card" style="padding:12px 16px;">
@@ -441,11 +472,20 @@
   </div>
 
   <nav>
+    <button data-tab="shared" id="nav-shared">Mocks</button>
     <button data-tab="home" class="active">Home</button>
     <button data-tab="take">Take test</button>
     <button data-tab="results">Results</button>
     <button data-tab="stats">Stats</button>
   </nav>
+
+  <section id="tab-shared">
+    <div class="card" style="padding:16px 18px;">
+      <h4 style="font-family:'Source Serif 4',serif;font-size:16px;margin-bottom:4px;">Shared mocks</h4>
+      <div class="hint" style="margin-bottom:10px;">These mocks were shared with you. Your scores are saved on this device only.</div>
+      <div id="shared-mocks-list"></div>
+    </div>
+  </section>
 
   <section id="tab-home" class="active">
 
@@ -625,7 +665,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
-  import { getFirestore, doc, setDoc, getDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+  import { getFirestore, doc, setDoc, getDoc, deleteDoc, runTransaction } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyCmuTFJoFJBgkX1qCyuP2LV8WgHGtrMd0g",
@@ -638,10 +678,14 @@
 
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
-  window.__ruledFirebase = { db, doc, setDoc, getDoc, deleteDoc };
+  window.__ruledFirebase = { db, doc, setDoc, getDoc, deleteDoc, runTransaction };
 </script>
 
 <script>
+// Shared-viewer mode: opened via a link like ...?share=KEY. In this mode the app shows
+// only the shared mocks and never reads or writes the owner's normal data.
+const SHARE_KEY_PARAM = new URLSearchParams(location.search).get('share');
+const isSharedMode = SHARE_KEY_PARAM !== null;
 let bank = [];
 let savedTests = [];
 let attempts = [];
@@ -929,6 +973,8 @@ document.getElementById('login-password').addEventListener('keydown', (e) => {
 document.getElementById('btn-open-settings').addEventListener('click', () => {
   requireAdmin(() => {
     document.getElementById('settings-overlay').style.display = 'flex';
+    renderShareMockList();
+    renderActiveShares();
   });
 });
 document.getElementById('btn-close-settings').addEventListener('click', () => {
@@ -1228,6 +1274,7 @@ function showKeyEntryState(message, color) {
 }
 
 function saveBank() {
+  if (isSharedMode) return;
   try {
     localStorage.setItem('ruled-question-bank', JSON.stringify(bank));
   } catch (e) { console.error('save failed', e); }
@@ -1253,6 +1300,7 @@ function loadSavedTests() {
 }
 
 function persistWeakQuestions() {
+  if (isSharedMode) return;
   try { localStorage.setItem('ruled-weak-questions', JSON.stringify(weakQuestions)); } catch (e) {}
 }
 
@@ -1355,7 +1403,7 @@ function renderStats() {
   document.getElementById('stats-overall').innerHTML = `
     <div>${attempts.length} test${attempts.length === 1 ? '' : 's'} taken</div>
     <div>${totalCorrect} / ${totalQuestions} questions correct overall (${overallPct}%)</div>
-    <div>${weakQuestions.length} question${weakQuestions.length === 1 ? '' : 's'} currently in your weak pool</div>
+    ${isSharedMode ? '' : `<div>${weakQuestions.length} question${weakQuestions.length === 1 ? '' : 's'} currently in your weak pool</div>`}
     ${streak > 0 ? `<div>🔥 ${streak} day${streak === 1 ? '' : 's'} study streak</div>` : ''}
   `;
 
@@ -1411,11 +1459,13 @@ function updateWeakPool(review) {
 }
 
 function persistSavedTests() {
+  if (isSharedMode) return;
   try { localStorage.setItem('ruled-saved-tests', JSON.stringify(savedTests)); } catch (e) {}
 }
 
 function persistAttempts() {
-  try { localStorage.setItem('ruled-attempts', JSON.stringify(attempts)); } catch (e) {}
+  const key = isSharedMode ? 'ruled-shared-attempts-' + SHARE_KEY_PARAM : 'ruled-attempts';
+  try { localStorage.setItem(key, JSON.stringify(attempts)); } catch (e) {}
 }
 
 function renderTestListInto(containerId, list, emptyText) {
@@ -1512,6 +1562,7 @@ function inferRailwaySubject(tagOrTitle) {
 }
 
 function renderSavedTests() {
+  if (isSharedMode) { renderSharedMocks(); return; }
   if (!document.getElementById('saved-tests-list')) return;
   renderTestListInto('mocklist-previous_year', savedTests.filter(t => t.category === 'previous_year'), 'No Previous Year Paper mocks yet — paste one in Settings → Question Builder, or start a random one above.');
 
@@ -2732,8 +2783,12 @@ function checkBackupReminder() {
 }
 
 document.getElementById('btn-reminder-backup').addEventListener('click', () => {
-  document.getElementById('settings-overlay').style.display = 'flex';
-  document.getElementById('backup-reminder-banner').style.display = 'none';
+  requireAdmin(() => {
+    document.getElementById('settings-overlay').style.display = 'flex';
+    renderShareMockList();
+    renderActiveShares();
+    document.getElementById('backup-reminder-banner').style.display = 'none';
+  });
 });
 
 document.getElementById('btn-reminder-dismiss').addEventListener('click', () => {
@@ -2741,10 +2796,288 @@ document.getElementById('btn-reminder-dismiss').addEventListener('click', () => 
   document.getElementById('backup-reminder-banner').style.display = 'none';
 });
 
-ensureDefaultAdminPassword();
-loadBank();
-loadSavedTests();
-checkBackupReminder();
+// ---------------- Sharing mocks via revocable links ----------------
+function getActiveShares() {
+  try { return JSON.parse(localStorage.getItem('ruled-active-shares') || '[]'); } catch (e) { return []; }
+}
+function saveActiveShares(list) {
+  try { localStorage.setItem('ruled-active-shares', JSON.stringify(list)); } catch (e) {}
+}
+function generateShareKey() {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes).map(b => alphabet[b % alphabet.length]).join('');
+}
+function buildShareLink(key) {
+  return location.href.split('#')[0].split('?')[0] + '?share=' + key;
+}
+function waitForFirebase(timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    (function check() {
+      if (window.__ruledFirebase) return resolve(window.__ruledFirebase);
+      if (Date.now() - start > timeoutMs) return reject(new Error('Could not reach the cloud — check your internet connection.'));
+      setTimeout(check, 150);
+    })();
+  });
+}
+async function copyText(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    if (btn) { const o = btn.textContent; btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = o; }, 1500); }
+  } catch (e) {
+    window.prompt('Copy this link:', text);
+  }
+}
+
+function renderShareMockList() {
+  const box = document.getElementById('share-mock-list');
+  if (!box) return;
+  if (!savedTests.length) { box.innerHTML = '<div class="hint" style="padding:8px 0;">No saved mocks yet.</div>'; return; }
+  box.innerHTML = '';
+  savedTests.slice().reverse().forEach(t => {
+    const row = document.createElement('label');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:0;padding:8px 0;font-size:13px;color:var(--ink);font-weight:400;border-bottom:1px dashed var(--rule);cursor:pointer;';
+    row.innerHTML = `<input type="checkbox" data-share-id="${t.id}" style="width:auto;flex:0 0 auto;"><span>${escapeHtml(t.title)} <span style="color:var(--ink-soft);">(${t.questions.length} Qs)</span></span>`;
+    box.appendChild(row);
+  });
+}
+
+function renderActiveShares() {
+  const el = document.getElementById('active-shares-list');
+  if (!el) return;
+  const list = getActiveShares();
+  if (!list.length) { el.innerHTML = '<div class="hint">No active links.</div>'; return; }
+  el.innerHTML = '';
+  list.slice().reverse().forEach(sh => {
+    const row = document.createElement('div');
+    row.style.cssText = 'padding:10px 0;border-bottom:1px dashed var(--rule);';
+    row.innerHTML = `
+      <div style="font-size:13px;font-weight:600;">${escapeHtml(sh.label)}</div>
+      <div class="hint" style="margin:2px 0 4px;">${sh.mockCount} mock${sh.mockCount === 1 ? '' : 's'} · created ${new Date(sh.createdAt).toLocaleDateString()}</div>
+      <div class="hint" data-status style="margin:0 0 8px;">Checking status…</div>
+      <div class="btn-row" style="margin-top:0;">
+        <button class="btn secondary" data-copy style="padding:5px 12px;font-size:12px;">Copy link</button>
+        <button class="btn secondary" data-reset style="padding:5px 12px;font-size:12px;display:none;">Reset device lock</button>
+        <button class="btn danger" data-revoke style="padding:5px 12px;font-size:12px;">Revoke</button>
+      </div>`;
+    row.querySelector('[data-copy]').addEventListener('click', (e) => copyText(buildShareLink(sh.key), e.target));
+    row.querySelector('[data-revoke]').addEventListener('click', () => {
+      requireAdmin(() => {
+        confirmAction(`Revoke access for "${sh.label}"? Their link will stop working.`, () => revokeShare(sh.key));
+      });
+    });
+    row.querySelector('[data-reset]').addEventListener('click', () => {
+      requireAdmin(() => {
+        confirmAction(`Reset the device lock for "${sh.label}"? The next device to open the link will lock it again.`, () => resetShareLock(sh.key));
+      });
+    });
+    el.appendChild(row);
+    refreshShareStatus(sh, row);
+  });
+}
+
+async function refreshShareStatus(sh, row) {
+  const statusEl = row.querySelector('[data-status]');
+  const resetBtn = row.querySelector('[data-reset]');
+  try {
+    const fb = await waitForFirebase(6000);
+    const snap = await fb.getDoc(fb.doc(fb.db, 'ruled_shares', sh.key));
+    if (!snap.exists()) {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = 'Already removed online — tap Revoke to clear it from this list.';
+      return;
+    }
+    const d = snap.data();
+    if (!d.deviceLock) { statusEl.textContent = 'No device lock — works on any device.'; return; }
+    if (d.claimedBy) {
+      statusEl.textContent = `Locked to one device (first opened ${new Date(d.claimedAt).toLocaleDateString()}).`;
+      resetBtn.style.display = 'inline-block';
+    } else {
+      statusEl.textContent = 'Not opened yet — locks to the first device that opens it.';
+    }
+  } catch (e) {
+    statusEl.textContent = 'Status unavailable (offline?).';
+  }
+}
+
+async function resetShareLock(key) {
+  const statusEl = document.getElementById('share-status');
+  statusEl.style.color = 'var(--ink-soft)';
+  statusEl.textContent = 'Resetting…';
+  try {
+    const fb = await waitForFirebase(8000);
+    await fb.setDoc(fb.doc(fb.db, 'ruled_shares', key), { claimedBy: null, claimedAt: null }, { merge: true });
+    renderActiveShares();
+    statusEl.style.color = 'var(--green)';
+    statusEl.textContent = 'Device lock reset. The next device to open the link will lock it.';
+  } catch (err) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = 'Could not reset: ' + (err && err.message ? err.message : 'unknown error');
+  }
+}
+
+async function revokeShare(key) {
+  const statusEl = document.getElementById('share-status');
+  statusEl.style.color = 'var(--ink-soft)';
+  statusEl.textContent = 'Revoking…';
+  try {
+    const fb = await waitForFirebase(8000);
+    await fb.deleteDoc(fb.doc(fb.db, 'ruled_shares', key));
+    saveActiveShares(getActiveShares().filter(x => x.key !== key));
+    renderActiveShares();
+    statusEl.style.color = 'var(--green)';
+    statusEl.textContent = 'Link revoked. It no longer opens for anyone.';
+  } catch (err) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = 'Could not revoke: ' + (err && err.message ? err.message : 'unknown error') + ' — the link is still active, try again.';
+  }
+}
+
+document.getElementById('btn-create-share').addEventListener('click', () => {
+  requireAdmin(async () => {
+    const statusEl = document.getElementById('share-status');
+    const picked = Array.from(document.querySelectorAll('#share-mock-list input[type=checkbox]:checked')).map(c => c.dataset.shareId);
+    if (!picked.length) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Tick at least one mock to share.'; return; }
+    const label = document.getElementById('share-label-input').value.trim() || 'Unnamed';
+    const mocks = savedTests.filter(t => picked.includes(t.id)).map(t => ({
+      id: t.id, title: t.title, category: t.category || null, tag: t.tag || null, timeMin: t.timeMin || 0, questions: t.questions
+    }));
+    const dataStr = JSON.stringify({ mocks });
+    const bytes = new TextEncoder().encode(dataStr).length;
+    if (bytes > 900000) {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = 'That selection is too large for one link (images make mocks heavy). Pick fewer mocks and make a second link for the rest.';
+      return;
+    }
+    statusEl.style.color = 'var(--ink-soft)';
+    statusEl.textContent = 'Creating link…';
+    try {
+      const fb = await waitForFirebase(8000);
+      const key = generateShareKey();
+      const deviceLock = document.getElementById('share-device-lock').checked;
+      await fb.setDoc(fb.doc(fb.db, 'ruled_shares', key), { app: 'Ruled', type: 'share', createdAt: Date.now(), label, deviceLock, claimedBy: null, claimedAt: null, data: dataStr });
+      const list = getActiveShares();
+      list.push({ key, label, createdAt: Date.now(), mockCount: mocks.length, deviceLock });
+      saveActiveShares(list);
+      document.getElementById('share-link-output').value = buildShareLink(key);
+      document.getElementById('share-link-box').style.display = 'block';
+      document.querySelectorAll('#share-mock-list input[type=checkbox]').forEach(c => { c.checked = false; });
+      document.getElementById('share-label-input').value = '';
+      renderActiveShares();
+      statusEl.style.color = 'var(--green)';
+      statusEl.textContent = `Link created for "${label}" (${mocks.length} mock${mocks.length === 1 ? '' : 's'}). Copy it and send it over.`;
+    } catch (err) {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = 'Could not create link: ' + (err && err.message ? err.message : 'unknown error');
+    }
+  });
+});
+
+document.getElementById('btn-copy-share-link').addEventListener('click', (e) => {
+  copyText(document.getElementById('share-link-output').value, e.target);
+});
+
+// ---------------- Viewer mode (someone opened a share link) ----------------
+function getDeviceId() {
+  try {
+    let id = localStorage.getItem('ruled-device-id');
+    if (!id) {
+      const b = new Uint8Array(16);
+      crypto.getRandomValues(b);
+      id = Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
+      localStorage.setItem('ruled-device-id', id);
+    }
+    return id;
+  } catch (e) {
+    return 'session-' + Math.random().toString(36).slice(2);
+  }
+}
+
+// Atomically loads the share and, if it is device-locked, claims it for this device
+// (first device wins). Runs as a Firestore transaction so two devices opening at the
+// same moment can't both claim it.
+function claimShare(fb, key) {
+  const deviceId = getDeviceId();
+  const ref = fb.doc(fb.db, 'ruled_shares', key);
+  return fb.runTransaction(fb.db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return { status: 'missing' };
+    const d = snap.data();
+    if (d.deviceLock) {
+      if (!d.claimedBy) tx.update(ref, { claimedBy: deviceId, claimedAt: Date.now() });
+      else if (d.claimedBy !== deviceId) return { status: 'locked' };
+    }
+    return { status: 'ok', data: d };
+  });
+}
+function renderSharedMocks() {
+  const listEl = document.getElementById('shared-mocks-list');
+  if (!listEl || !savedTests.length) return;
+  listEl.innerHTML = '';
+  savedTests.forEach(t => {
+    const testAttempts = attempts.filter(a => a.testId === t.id);
+    const last = testAttempts[testAttempts.length - 1];
+    const el = document.createElement('div');
+    el.className = 'saved-test-item';
+    el.innerHTML = `
+      <div class="info">
+        <h4>${escapeHtml(t.title)}</h4>
+        <div class="meta">${t.questions.length} questions · ${t.timeMin > 0 ? t.timeMin + ' min limit' : 'no time limit'}${last ? ' · last score ' + last.correct + '/' + last.total : ' · not attempted yet'}${testAttempts.length ? ' · ' + testAttempts.length + ' attempt' + (testAttempts.length === 1 ? '' : 's') : ''}</div>
+      </div>
+      <div class="actions"><button class="btn secondary" data-start>${last ? 'Retake' : 'Start'}</button></div>`;
+    el.querySelector('[data-start]').addEventListener('click', () => {
+      confirmAction(`Start "${t.title}" (${t.questions.length} questions)?`, () => {
+        currentTest = { title: t.title, questions: JSON.parse(JSON.stringify(t.questions)), timeMin: t.timeMin, savedId: t.id };
+        testAnswers = {};
+        currentQIdx = 0;
+        questionTimes = {};
+        offerSectionsSetup();
+      });
+    });
+    listEl.appendChild(el);
+  });
+}
+
+async function initSharedMode() {
+  document.body.classList.add('shared-mode');
+  try { attempts = JSON.parse(localStorage.getItem('ruled-shared-attempts-' + SHARE_KEY_PARAM) || '[]'); } catch (e) { attempts = []; }
+  const emptyMsg = document.querySelector('#take-empty p');
+  if (emptyMsg) emptyMsg.textContent = 'Pick a mock from the Mocks tab to start.';
+  switchTab('shared');
+  const listEl = document.getElementById('shared-mocks-list');
+  const showMessage = (title, text) => { listEl.innerHTML = `<div class="empty"><h3>${title}</h3><p>${text}</p></div>`; };
+  if (!/^[a-z0-9]{6,40}$/.test(SHARE_KEY_PARAM)) {
+    showMessage('Invalid link', "This link doesn't look right. Ask the person who shared it to send it again.");
+    return;
+  }
+  listEl.innerHTML = '<div class="hint">Loading shared mocks…</div>';
+  try {
+    const fb = await waitForFirebase(10000);
+    const result = await claimShare(fb, SHARE_KEY_PARAM);
+    if (result.status === 'missing') { showMessage('Link no longer active', 'The owner has removed access to these mocks.'); return; }
+    if (result.status === 'locked') {
+      showMessage('Link already in use', 'This link is locked to another device or browser. If you switched phone or browser, ask the person who shared it to reset it.');
+      return;
+    }
+    const parsed = JSON.parse(result.data.data);
+    savedTests = Array.isArray(parsed.mocks) ? parsed.mocks : [];
+    if (!savedTests.length) { showMessage('Nothing here', 'No mocks were found in this link.'); return; }
+    renderSharedMocks();
+  } catch (err) {
+    showMessage("Couldn't load", err && err.message ? err.message : 'Check your internet connection and try again.');
+  }
+}
+
+if (isSharedMode) {
+  initSharedMode();
+} else {
+  ensureDefaultAdminPassword();
+  loadBank();
+  loadSavedTests();
+  checkBackupReminder();
+}
 </script>
 </body>
 </html>
