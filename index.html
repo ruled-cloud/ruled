@@ -394,6 +394,14 @@
 
           <h3 style="font-size:15px;margin:18px 0 10px;">Bank</h3>
           <div class="card" style="padding:12px 16px;margin-bottom:12px;">
+            <div class="hint" style="margin-bottom:8px;">Build a mock from questions already in your bank — use this if a batch didn't auto-create a mock (mocks only auto-create when a batch is exactly 25/50/20/85/100 questions), or if you added questions one at a time.</div>
+            <div class="row" style="align-items:center;gap:8px;">
+              <input type="text" id="mock-from-tag-input" placeholder="Exact tag, e.g. Railway Reasoning">
+              <button class="btn secondary" id="btn-create-mock-from-tag" style="flex:0 0 auto;">Build mock</button>
+            </div>
+            <div class="error-text" id="mock-from-tag-status" style="display:none;margin-top:8px;"></div>
+          </div>
+          <div class="card" style="padding:12px 16px;margin-bottom:12px;">
             <div class="hint" style="margin-bottom:8px;">Find questions left over from mocks you've already deleted — these are tags in your bank that no current saved mock uses.</div>
             <div class="btn-row" style="margin-top:0;">
               <button class="btn secondary" id="btn-find-leftovers">Find leftover questions</button>
@@ -1961,6 +1969,54 @@ document.getElementById('btn-parse-paper').addEventListener('click', async () =>
     btn.disabled = false;
     label.textContent = 'Parse and add to bank';
   }
+});
+
+document.getElementById('btn-create-mock-from-tag').addEventListener('click', () => {
+  requireAdmin(() => {
+    const tag = document.getElementById('mock-from-tag-input').value.trim();
+    const statusEl = document.getElementById('mock-from-tag-status');
+    statusEl.style.display = 'block';
+
+    if (!tag) {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = 'Type the exact tag first.';
+      return;
+    }
+    const matching = bank.filter(q => q.tag === tag);
+    if (matching.length === 0) {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = `No questions found with the tag "${tag}" — check the exact spelling/capitalization.`;
+      return;
+    }
+    const category = matching[0].category;
+    if (!['previous_year', 'sectional', 'marathon', 'repeated'].includes(category)) {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = `These ${matching.length} questions aren't set to a home category (Previous Year / Sectional / Marathon / Repeated) — their category is currently "${category || 'none'}", so there's nowhere on Home to place a mock built from them.`;
+      return;
+    }
+    const existingMock = savedTests.find(t => t.category === category && t.tag === tag && t.questions.length === matching.length);
+    if (existingMock) {
+      statusEl.style.color = 'var(--amber)';
+      statusEl.textContent = `A mock called "${existingMock.title}" already exists with all ${matching.length} of these questions — check Home before building a duplicate.`;
+      return;
+    }
+    const num = savedTests.filter(x => x.category === category && x.tag === tag).length + 1;
+    const savedEntry = {
+      id: uid(),
+      title: `${tag} ${num}`,
+      category,
+      tag,
+      questions: JSON.parse(JSON.stringify(matching)),
+      timeMin: 0,
+      createdAt: Date.now()
+    };
+    savedTests.push(savedEntry);
+    persistSavedTests();
+    renderSavedTests();
+    document.getElementById('mock-from-tag-input').value = '';
+    statusEl.style.color = 'var(--green)';
+    statusEl.textContent = `Created "${savedEntry.title}" with ${matching.length} questions — find it on Home.`;
+  });
 });
 
 function deleteBankByTag(tag, onDone) {
