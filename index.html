@@ -1889,8 +1889,9 @@ function addParsedQuestionsToBank(questions, tag, category) {
 function maybeCreateMockFromBatch(addedQuestions, category, timeMin) {
   if (!addedQuestions || addedQuestions.length === 0) return null;
   if (!['previous_year', 'sectional', 'marathon', 'repeated'].includes(category)) return null;
-  const expectedSize = category === 'previous_year' ? [85, 100] : [{ sectional: 25, marathon: 50, repeated: 20 }[category]];
-  if (!expectedSize.includes(addedQuestions.length)) return null;
+  // No exact-count requirement: as long as a real home category was picked (manually,
+  // or auto-detected from an exact batch size like 25/50/20/85/100), build the mock
+  // from whatever count actually came in — 22, 30, 47, doesn't matter.
   const tag = (addedQuestions[0] && addedQuestions[0].tag) || 'General';
   const num = savedTests.filter(x => x.category === category && x.tag === tag).length + 1;
   const savedEntry = {
