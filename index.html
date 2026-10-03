@@ -1983,22 +1983,28 @@ document.getElementById('btn-create-mock-from-tag').addEventListener('click', ()
       statusEl.textContent = 'Type the exact tag first.';
       return;
     }
-    const matching = bank.filter(q => q.tag === tag);
-    if (matching.length === 0) {
+    const allMatching = bank.filter(q => q.tag === tag);
+    if (allMatching.length === 0) {
       statusEl.style.color = 'var(--red)';
       statusEl.textContent = `No questions found with the tag "${tag}" — check the exact spelling/capitalization.`;
+      return;
+    }
+    // Only pull questions not already sitting inside some other saved mock — otherwise
+    // using this more than once on the same tag re-grabs everything each time and
+    // produces overlapping mocks (e.g. a second "Reasoning 2" that duplicates all of
+    // "Reasoning 1" plus whatever's new).
+    const usedIds = new Set();
+    savedTests.forEach(t => t.questions.forEach(q => usedIds.add(q.id)));
+    const matching = allMatching.filter(q => !usedIds.has(q.id));
+    if (matching.length === 0) {
+      statusEl.style.color = 'var(--amber)';
+      statusEl.textContent = `All ${allMatching.length} questions tagged "${tag}" are already in an existing mock — nothing new to build. Check Home.`;
       return;
     }
     const category = matching[0].category;
     if (!['previous_year', 'sectional', 'marathon', 'repeated'].includes(category)) {
       statusEl.style.color = 'var(--red)';
       statusEl.textContent = `These ${matching.length} questions aren't set to a home category (Previous Year / Sectional / Marathon / Repeated) — their category is currently "${category || 'none'}", so there's nowhere on Home to place a mock built from them.`;
-      return;
-    }
-    const existingMock = savedTests.find(t => t.category === category && t.tag === tag && t.questions.length === matching.length);
-    if (existingMock) {
-      statusEl.style.color = 'var(--amber)';
-      statusEl.textContent = `A mock called "${existingMock.title}" already exists with all ${matching.length} of these questions — check Home before building a duplicate.`;
       return;
     }
     const num = savedTests.filter(x => x.category === category && x.tag === tag).length + 1;
